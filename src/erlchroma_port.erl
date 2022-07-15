@@ -5,6 +5,42 @@
 -export([start/0,check_multiple/2,start/1, stop/1, init/1]).
 
 
+%% @doc 
+%% 1  write code to decode media file into a pcm format
+%% 	  code to then create fingreprint
+%% 	  code to then store in ets along with pseudo id of artist
+%% 2. code to then be finding songs as i stream the data from a url and calculate length of song which is being played/streamed
+%%	  calculation is done by finding songs which are being played and then using the timestamp to increase  duration of track 
+
+
+
+
+
+%% @doc
+
+-spec decode_batch()-> list().
+decode_batch()->
+    %%ffmpeg -i out/open_gate.mp3 -acodec pcm_s16le out/open_gate_new.wav
+	{ok,Temp_folder} = application:get_env(erlchroma,temp_folder),
+	{ok,Decoded_folder} = application:get_env(erlchroma,decoded_folder),
+	{ok,Directlist} =file:list_dir(Temp_folder),
+	lists:map(
+	fun(File_name)-> 
+		Path_track = lists:concat([Temp_folder,File_name]),
+		Decode_name = lists:concat([Decoded_folder,File_name]),
+		Command_Exec = ["ffmpeg","-i",Path_track,"-f","wav",Decode_name],
+		case exec:run(Command_Exec, [sync,{stdout,print}]) of 
+			{ok,Res} ->
+			   io:format("~n status after executation is ~p",[Res]);
+			{error,Res}->
+			   io:format("~n error converting file ~p",[Res])	
+		end	
+    end,Directlist).
+
+
+
+
+
 %% @doc for testing for running multiple instances of a command 
 %%Command = "fpcalc -ts -chunk 2 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra",
 -spec check_multiple(integer(),binary()|string())->list().
