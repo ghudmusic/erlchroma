@@ -2,12 +2,13 @@
 
 -export([]).
 
--export([start/0,check_multiple/2,start/1, stop/1, init/1]).
+-export([start/0,check_multiple/2,start/1, stop/1, init/1,decode_batch/0]).
 
 
 %% @doc 
 %% 1  write code to decode media file into a pcm format
 %% 	  code to then create fingreprint
+%%	  code to store fingerprints in binary file/code to also load fingerprints into ets file
 %% 	  code to then store in ets along with pseudo id of artist
 %% 2. code to then be finding songs as i stream the data from a url and calculate length of song which is being played/streamed
 %%	  calculation is done by finding songs which are being played and then using the timestamp to increase  duration of track 
@@ -26,9 +27,10 @@ decode_batch()->
 	{ok,Directlist} =file:list_dir(Temp_folder),
 	lists:map(
 	fun(File_name)-> 
-		Path_track = lists:concat([Temp_folder,File_name]),
-		Decode_name = lists:concat([Decoded_folder,File_name]),
-		Command_Exec = ["ffmpeg","-i",Path_track,"-f","wav",Decode_name],
+		Path_track = lists:concat([Temp_folder,"/",File_name]),
+		Decode_name = lists:concat([Decoded_folder,"/",lists:nth(1,string:tokens(File_name,"."))]),
+		Command_Exec = ["/usr/bin/ffmpeg","-i",Path_track,"-f","wav",Decode_name],
+		io:format("~ncommand to be executed is ~p",[Command_Exec]),
 		case exec:run(Command_Exec, [sync,{stdout,print}]) of 
 			{ok,Res} ->
 			   io:format("~n status after executation is ~p",[Res]);
