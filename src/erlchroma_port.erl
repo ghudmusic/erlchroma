@@ -2,7 +2,7 @@
 
 -export([]).
 
--export([start/0,check_multiple/2,start/1, stop/1, init/1,decode_batch/0]).
+-export([start/0,check_multiple/2,start/1, stop/1, init/1,decode_batch/0,create_fingerprints/0]).
 
 
 %% @doc 
@@ -41,6 +41,28 @@ decode_batch()->
 
 
 
+-spec create_fingerprints()-> list().
+create_fingerprints()->
+	{ok,Track_converted_folder} = application:get_env(erlchroma,decoded_folder),
+	{ok,Finpgerprint_folder} = application:get_env(erlchroma,finpgerprint_folder),
+	{ok,Directlist} =file:list_dir(Track_converted_folder),
+	lists:map(
+	fun(File_name)-> 
+		Path_convert_track = lists:concat([Track_converted_folder,"/",File_name]),
+		Command_Exec = ["/usr/bin/fpcalc","-chunk","2","-json","-overlap",Path_convert_track],
+		io:format("~ncommand to be executed is ~p",[Command_Exec]),
+		case exec:run(Command_Exec, [sync,stdout]) of 
+			{ok,[{stdout,List_fingerprint}]} ->
+			   ok = file:write_file(lists:concat([Finpgerprint_folder,"/",File_name]), io_lib:format("~p.~n", [List_fingerprint]));
+			{error,Res}->
+			   io:format("~n error converting file ~p",[Res])	
+		end	
+    end,Directlist).	
+
+
+-spec load_fingerprints()->list().
+load_fingerprints_ets()->
+	ok.
 
 
 %% @doc for testing for running multiple instances of a command 
