@@ -26,16 +26,16 @@ decode_batch()->
 	{ok,Decoded_folder} = application:get_env(erlchroma,decoded_folder),
 	{ok,Directlist} =file:list_dir(Temp_folder),
 	lists:map(
-	fun(File_name)-> 
-		Path_track = lists:concat([Temp_folder,"/",File_name]),
-		Decode_name = lists:concat([Decoded_folder,"/",lists:nth(1,string:tokens(File_name,"."))]),
-		Command_Exec = ["/usr/bin/ffmpeg","-i",Path_track,"-f","wav",Decode_name],
-		io:format("~ncommand to be executed is ~p",[Command_Exec]),
-		case exec:run(Command_Exec, [sync,{stdout,print}]) of 
-			{ok,Res} ->
-			   io:format("~n status after executation is ~p",[Res]);
-			{error,Res}->
-			   io:format("~n error converting file ~p",[Res])	
+		fun(File_name)-> 
+			Path_track = lists:concat([Temp_folder,"/",File_name]),
+			Decode_name = lists:concat([Decoded_folder,"/",lists:nth(1,string:tokens(File_name,"."))]),
+			Command_Exec = ["/usr/bin/ffmpeg","-i",Path_track,"-f","wav",Decode_name],
+			io:format("~ncommand to be executed is ~p",[Command_Exec]),
+			case exec:run(Command_Exec, [sync,{stdout,print}]) of 
+				{ok,Res} ->
+				   io:format("~n status after executation is ~p",[Res]);
+				{error,Res}->
+				   io:format("~n error converting file ~p",[Res])	
 		end	
     end,Directlist).
 
@@ -47,20 +47,23 @@ create_fingerprints()->
 	{ok,Finpgerprint_folder} = application:get_env(erlchroma,finpgerprint_folder),
 	{ok,Directlist} =file:list_dir(Track_converted_folder),
 	lists:map(
-	fun(File_name)-> 
-		Path_convert_track = lists:concat([Track_converted_folder,"/",File_name]),
-		Command_Exec = ["/usr/bin/fpcalc","-chunk","2","-json","-overlap",Path_convert_track],
-		io:format("~ncommand to be executed is ~p",[Command_Exec]),
-		case exec:run(Command_Exec, [sync,stdout]) of 
-			{ok,[{stdout,List_fingerprint}]} ->
-			   ok = file:write_file(lists:concat([Finpgerprint_folder,"/",File_name]), io_lib:format("~p.~n", [List_fingerprint]));
-			{error,Res}->
-			   io:format("~n error converting file ~p",[Res])	
-		end	
-    end,Directlist).	
+		fun(File_name)-> 
+			Path_convert_track = lists:concat([Track_converted_folder,"/",File_name]),
+			Command_Exec = ["/usr/bin/fpcalc","-chunk","2","-json","-overlap",Path_convert_track],
+			Fingerprint_name = erlang:binary_to_list(uuid:uuid_to_string(uuid:get_v4(), binary_standard)),
+			Proplist_binary = [{name_file,File_name},{id_file,Fingerprint_name}],
+			io:format("~ncommand to be executed is ~p",[Command_Exec]),
+			case exec:run(Command_Exec, [sync,stdout]) of 
+				{ok,[{stdout,List_fingerprint}]} ->
+				   ok = file:write_file(lists:concat([Finpgerprint_folder,"/",File_name]), io_lib:format("~p", [[{fingerprint,List_fingerprint}|Proplist_binary]]));
+				{error,Res}->
+				   io:format("~n error converting file ~p",[Res])	
+			end	
+		end,
+    Directlist).	
 
 
--spec load_fingerprints()->list().
+-spec load_fingerprints_ets()->list().
 load_fingerprints_ets()->
 	ok.
 

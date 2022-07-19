@@ -1,4 +1,12 @@
 [{<<"erlexec">>,
   {git,"https://github.com/saleyn/erlexec.git",
        {ref,"b4a4192692c895e3b19714fade20721041bfb381"}},
+  0},
+ {<<"quickrand">>,
+  {git,"https://github.com/okeuday/quickrand.git",
+       {ref,"1c60daa4b0edcec0a6b8310443574baac962ea88"}},
+  1},
+ {<<"uuid">>,
+  {git,"https://github.com/okeuday/uuid.git",
+       {ref,"23167ed8689f656ea6765572215a40b9856d7886"}},
   0}].
