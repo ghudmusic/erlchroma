@@ -2,7 +2,7 @@
 
 -export([]).
 
--export([start/0,check_multiple/2,start/1, stop/1, init/1,decode_batch/0,create_fingerprints/0]).
+-export([start/0,check_multiple/2,start/1, stop/1, init/1,decode_batch/0,create_fingerprints/0,load_fingerprints_ets/0]).
 
 
 %% @doc 
@@ -55,7 +55,7 @@ create_fingerprints()->
 			io:format("~ncommand to be executed is ~p",[Command_Exec]),
 			case exec:run(Command_Exec, [sync,stdout]) of 
 				{ok,[{stdout,List_fingerprint}]} ->
-				   ok = file:write_file(lists:concat([Finpgerprint_folder,"/",File_name]), io_lib:format("~p", [[{fingerprint,List_fingerprint}|Proplist_binary]]));
+				   ok = file:write_file(lists:concat([Finpgerprint_folder,"/",File_name]), io_lib:format("~p.", [[{fingerprint,List_fingerprint}|Proplist_binary]]));
 				{error,Res}->
 				   io:format("~n error converting file ~p",[Res])	
 			end	
@@ -63,13 +63,44 @@ create_fingerprints()->
     Directlist).	
 
 
--spec load_fingerprints_ets()->list().
+%% @doc this is for loading fingerprints int the ets 
+-spec load_fingerprints_ets()->list()|atom().
 load_fingerprints_ets()->
+	case ets:info(fingerprint) of 
+		undefined ->
+			ets:new(fingerprints, [duplicate_bag, named_table]);
+		_ ->
+			ok
+	end,
+	{ok,Fingerprint_folder} = application:get_env(erlchroma,finpgerprint_folder),
+	{ok,Directlist} = file:list_dir(Fingerprint_folder),
+	io:format("~njson data is ~p",[Directlist]),
+	lists:map(
+		fun(File_name)->
+			{ok,[Data]} = file:consult(lists:concat([Fingerprint_folder,"/",File_name])),
+			Id_track =  proplists:get_value(id_file,Data),
+			Fingerprint_data = proplists:get_value(fingerprint,Data),
+			%%io:format("~nfdata is ~p~p~p",[Data,Id_artist,Fingerprint_data]),
+			lists:map(
+				fun(Fdata)->
+					Json_data = jsx:decode(unicode:characters_to_binary(Fdata)),
+					io:format("~njson data is ~p",[Json_data]),
+					Fprint = proplists:get_value(<<"fingerprint">>,Json_data),
+					ets:insert(fingerprints,{Fprint,Id_track})
+				end,
+			Fingerprint_data),
+			io:format("~nfingperprint data is ~p",[Data])
+		end,
+	Directlist),
 	ok.
 
 
+-spec compare_fingerprint(binary())->list().
+compare_fingerprint(Fprint)->
+	ok.
+
 %% @doc for testing for running multiple instances of a command 
-%%Command = "fpcalc -ts -chunk 2 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra",
+%%Command = "/usr/bin/fpcalc -ts -chunk 2 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra",
 -spec check_multiple(integer(),binary()|string())->list().
 check_multiple(N,Command)->
 	List_pids = lists:map(fun(_) -> start(Command) end,lists:seq(1,N)).
