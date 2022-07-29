@@ -6,10 +6,10 @@
 
 
 %% @doc 
-%% 1  write code to decode media file into a pcm format
-%% 	  code to then create fingreprint
-%%	  code to store fingerprints in binary file/code to also load fingerprints into ets file
-%% 	  code to then store in ets along with pseudo id of artist
+%% 1  write code to decode media file into a pcm format--done
+%% 	  code to then create fingreprint--done
+%%	  code to store fingerprints in binary file/code to also load fingerprints into ets file--done
+%% 	  code to then store in ets along with pseudo id of artist--done
 %% 2. code to then be finding songs as i stream the data from a url and calculate length of song which is being played/streamed
 %%	  calculation is done by finding songs which are being played and then using the timestamp to increase  duration of track 
 
@@ -36,8 +36,9 @@ decode_batch()->
 				   io:format("~n status after executation is ~p",[Res]);
 				{error,Res}->
 				   io:format("~n error converting file ~p",[Res])	
-		end	
-    end,Directlist).
+			end	
+		end,
+	Directlist).
 
 
 
@@ -79,6 +80,7 @@ load_fingerprints_ets()->
 		fun(File_name)->
 			{ok,[Data]} = file:consult(lists:concat([Fingerprint_folder,"/",File_name])),
 			Id_track =  proplists:get_value(id_file,Data),
+			Name_file = proplists:get_value(name_file,Data),
 			Fingerprint_data = proplists:get_value(fingerprint,Data),
 			%%io:format("~nfdata is ~p~p~p",[Data,Id_artist,Fingerprint_data]),
 			lists:map(
@@ -86,7 +88,7 @@ load_fingerprints_ets()->
 					Json_data = jsx:decode(unicode:characters_to_binary(Fdata)),
 					io:format("~njson data is ~p",[Json_data]),
 					Fprint = proplists:get_value(<<"fingerprint">>,Json_data),
-					ets:insert(fingerprints,{Fprint,Id_track})
+					ets:insert(fingerprints,{Fprint,Id_track,Name_file})
 				end,
 			Fingerprint_data),
 			io:format("~nfingperprint data is ~p",[Data])
@@ -95,9 +97,8 @@ load_fingerprints_ets()->
 	ok.
 
 
--spec compare_fingerprint(binary())->list().
-compare_fingerprint(Fprint)->
-	ok.
+
+	
 
 %% @doc for testing for running multiple instances of a command 
 %%Command = "/usr/bin/fpcalc -ts -chunk 2 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra",
@@ -123,16 +124,20 @@ stop(Pid) ->
 
 
 %%for initilizing the port for runnig commands
+%%will use a dictinary to store the current song/songs which has been identfied,current timestamp
+%%have to find out what is an acceptable time difference to know a song has finished playing
+%% Data = #{current_songs => [{id(),starttime(),clength()}]}. 
 -spec init([string() | char()]) -> pid().
 init(ExtPrg) ->
     process_flag(trap_exit, true),
     {ok,Pid,Ospid} = exec:run(ExtPrg, [stdout, stderr,monitor]),
-    loop(Pid,Ospid,ExtPrg).
+    Data = [], 
+    loop(Pid,Ospid,ExtPrg,Data).
 
 
-%%for looping and execting main function
--spec loop(pid(),integer(),[string() | char()]) -> pid().
-loop(Pid,Ospid,ExtPrg) ->
+%%for looping and executing main function
+-spec loop(pid(),integer(),[string() | char()],list()) -> pid().
+loop(Pid,Ospid,ExtPrg,State_data) ->
     receive
 		{'DOWN',Ospid,process,Pid,normal}->
 			io:format("~n os process ~p with process ~p is down ~n",[Ospid,Pid]),
@@ -140,8 +145,49 @@ loop(Pid,Ospid,ExtPrg) ->
 		{'EXIT', Port, Reason} ->
 			io:format("~n Port was killed for reason ~p ~p ~nrestarting port~n",[Port,Reason]),
 			exit(processexited);
-		Data ->
-			io:format("~ndata received is ~p",[Data]),
-			loop(Pid,Ospid,ExtPrg)
-
+		{stdout,Ospid,Fingerprint_data_station} ->
+			io:format("~ndata received is ~p",[Fingerprint_data_station]),
+			Process_data = process_data(State_data,Fingerprint_data_station),
+			io:format("~nstate data is ~n~p",[Process_data]),
+			loop(Pid,Ospid,ExtPrg,Process_data)
     end.
+
+
+-spec process_data(list(),binary())->list().
+process_data(State_data,Data_station)->
+	Json_data = jsx:decode(unicode:characters_to_binary(Data_station)),
+	Timestamp_data = proplists:get_value(<<"timestamp">>,Json_data),
+	Fingerprint_index = proplists:get_value(<<"fingerprint">>,Json_data),
+	io:format("~njson data is ~n~p~n~p",[Timestamp_data,Fingerprint_index]),
+	case ets:lookup(fingerprints,Fingerprint_index) of 
+		[]->
+			State_data;
+		Ets_results ->
+			lists:foldl(
+			%%accumilator has to be complex to allow for recognition of same song
+			%%a special field will have to be created which will accomodate songs which have ended
+			%%songs which have began anew will then continue on
+				fun({Fprint_song,Id_song_ets,Artist_name_ets},{Accum_State,Startime_fold,State_fold})->
+						Process_tracks =
+							lists:map(
+								fun(Single_song_state_data = {Id_song_playing,Startime_playing,Length_song_playing})->
+									
+
+									case  Id_song_ets =:= Id_song_playing of  %%andalso Startime_fold - (Startime_playing+Length_song_playing) < 2
+										true ->
+											New_length_playing = (Startime_fold - Startime_playing)+Length_song_playing,
+											{Id_song_playing,Startime_playing,Length_song_playing};
+										false ->
+											   
+											Single_song_state_data
+									end
+
+	
+								end,
+							State_fold),
+						{lists:flatten(Accum_State,Process_tracks),Startime_fold,State_fold};
+					({Fprint_song,Id_song_ets,Artist_name_ets},{Accum_State,Startime_fold,[]})->
+						{[{Id_song_ets,Startime_fold,0} | Accum_State],Startime_fold,[]}
+				end,
+			{[],Timestamp_data,State_data},Ets_results)
+	end.
