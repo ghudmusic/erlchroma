@@ -78,20 +78,22 @@ load_fingerprints_ets()->
 	%%io:format("~njson data is ~p",[Directlist]),
 	lists:map(
 		fun(File_name)->
+			%%io:format("~nfile name is  ~p",[File_name]),
 			{ok,[Data]} = file:consult(lists:concat([Fingerprint_folder,"/",File_name])),
 			Id_track =  proplists:get_value(id_file,Data),
 			Name_file = proplists:get_value(name_file,Data),
 			Fingerprint_data = proplists:get_value(fingerprint,Data),
-			io:format("~nfdata is ~n~p~p~p",[Data,Id_track,Fingerprint_data]),
+			%%io:format("~nfdata is ~n~p~p~p",[Data,Id_track,Fingerprint_data]),
 			lists:map(
 				fun(Fdata)->
+					%%io:format("~nmap data is ~p",[Fdata]),
 					Json_data = jsx:decode(unicode:characters_to_binary(Fdata)),
 					%%io:format("~njson data is ~p",[Json_data]),
 					Fprint = proplists:get_value(<<"fingerprint">>,Json_data),
 					ets:insert(fingerprints,{Fprint,Id_track,Name_file})
 				end,
-			Fingerprint_data),
-			io:format("~nfingperprint data is ~p",[Data])
+			Fingerprint_data)
+			%%io:format("~nfingperprint data is ~p",[Data])
 		end,
 	Directlist),
 	ok.
@@ -154,41 +156,46 @@ loop(Pid,Ospid,ExtPrg,State_data) ->
     end.
 
 
+%%first of all get the list of ids for a which are being processed in a song
+%%after the song finishes playing remove the id from the list of songs
+%%condition for finished song is that there musnt be less than 10 seconds from the time the song was last played
+%%remove it from the list of ids of songs being identified and store it in a new table for played songs
+%%start the loop again by receiving new data
 -spec process_data(list(),binary())->list().
 process_data(State_data,Data_station)->
 	Json_data = jsx:decode(unicode:characters_to_binary(Data_station)),
 	Timestamp_data = proplists:get_value(<<"timestamp">>,Json_data),
 	Fingerprint_index = proplists:get_value(<<"fingerprint">>,Json_data),
-	io:format("~nstate data is ~p~n json data is ~n~p~n~p",[State_data,Timestamp_data,Fingerprint_index]),
-	{Process_accum_end,Old_Timestamp} = 
+	io:format("~nstate data is ~p",[State_data]),
+	%%io:format("~nstate data is ~p~n json data is ~p ~p",[State_data,Timestamp_data,Fingerprint_index]),
 	case ets:lookup(fingerprints,Fingerprint_index) of 
 		[]->
 			State_data;
 		Ets_results ->
-			io:format("~n result data is ~p",[Ets_results]),
+			%%io:format("~n result data is ~p",[Ets_results]),
+			{Process_accum_end,Old_Timestamp,Songs_ids} = 
 			lists:foldl(
-			%%accumilator has to be complex to allow for recognition of same song
-			%%a special field will have to be created which will accomodate songs which have ended
-			%%songs which have began anew will then continue on
-				fun({Fprint_song,Id_song_ets,Artist_name_ets},{Accum_State,New_timestamp})when length(Accum_State) > 0->
+				fun({Fprint_song,Id_song_ets,Artist_name_ets},{Accum_State,New_timestamp,Ids_songs})when length(Accum_State) > 0->
 						Process_tracks =
 							lists:map(
 								fun(Single_song_state_data = {Id_song_playing,Startime_playing,Length_song_playing})->
-									io:format("~n new timestamp ~p~n and  old timestamp ~p",[New_timestamp,Startime_playing]),
+									%%io:format("~n new timestamp ~p~n and  old timestamp ~p",[New_timestamp,Startime_playing]),
 									case  Id_song_ets =:= Id_song_playing of  %%andalso New_timestamp - (Startime_playing+Length_song_playing) < 2
 										true ->
-											New_length_playing = (New_timestamp - Startime_playing)+Length_song_playing,
+											New_length_playing = New_timestamp - Startime_playing,
 											{Id_song_playing,Startime_playing,New_length_playing};
 										false ->
 											Single_song_state_data
 									end
 								end,
 							Accum_State),
-						{lists:flatten(Accum_State,Process_tracks),New_timestamp};
-					({Fprint_song,Id_song_ets,Artist_name_ets},{[],New_timestamp})->
-						{[{Id_song_ets,New_timestamp,0} | []],New_timestamp}
+						%%create two states one for the current song being processed and one for finished songs which have been processed
+						%%this is so you can insert the old songs into the database when a new song is identified as being played
+						%%{lists:flatten(Accum_State,Process_tracks),New_timestamp};
+						{Process_tracks,New_timestamp,Ids_songs};
+					({Fprint_song,Id_song_ets,Artist_name_ets},{[],New_timestamp,Ids_songs})->
+						{[{Id_song_ets,New_timestamp,0} | []],New_timestamp,Ids_songs}
 				end,
-			{State_data,Timestamp_data},Ets_results)
-	end,
-	io:format("~nstate data after being processed is ~n~p",[Process_accum_end]),
-	Process_accum_end.
+			{State_data,Timestamp_data,[]},Ets_results),
+			Process_accum_end
+	end.
