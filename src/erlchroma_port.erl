@@ -103,7 +103,7 @@ load_fingerprints_ets()->
 	
 
 %% @doc for testing for running multiple instances of a command 
-%%Command = "/usr/bin/fpcalc -ts -chunk 1 -overlap -json http://172.23.0.2:8005",
+%%Command = "/usr/bin/fpcalc -ts -length 3600 -chunk 1 -overlap -json http://172.23.0.2:8005",
 %%["/usr/bin/fpcalc -ts -chunk 2 -overlap -json http://cassini.shoutca.st:8922/;?type=http&nocache=115",
 %%"/usr/bin/fpcalc -ts -chunk 2 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra"
 %%%%Command = "/usr/bin/fpcalc -ts -chunk 1 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra",
@@ -173,29 +173,34 @@ process_data(State_data,Data_station)->
 			State_data;
 		Ets_results ->
 			%%io:format("~n result data is ~p",[Ets_results]),
-			{Process_accum_end,Old_Timestamp,Songs_ids} = 
+			{Process_accum_end,_} = 
 			lists:foldl(
-				fun({Fprint_song,Id_song_ets,Artist_name_ets},{Accum_State,New_timestamp,Ids_songs})when length(Accum_State) > 0->
-						Process_tracks =
-							lists:map(
-								fun(Single_song_state_data = {Id_song_playing,Startime_playing,Length_song_playing})->
+				fun({Fprint_song,Id_song_ets,Artist_name_ets},{Accum_State,New_timestamp})->
+						{Process_tracks,Check_fresh_song_status} =
+							lists:mapfoldl(
+								fun(Single_song_state_data = {Id_song_playing,Startime_playing,Length_song_playing,Status},Check_fresh_song)->
 									%%io:format("~n new timestamp ~p~n and  old timestamp ~p",[New_timestamp,Startime_playing]),
-									case  Id_song_ets =:= Id_song_playing of  %%andalso New_timestamp - (Startime_playing+Length_song_playing) < 2
-										true ->
+									case  {Id_song_ets =:= Id_song_playing,(New_timestamp - (Startime_playing+Length_song_playing)) =< 2} of 
+										{true,true} ->
 											New_length_playing = New_timestamp - Startime_playing,
-											{Id_song_playing,Startime_playing,New_length_playing};
-										false ->
-											Single_song_state_data
+											{{Id_song_playing,Startime_playing,New_length_playing,processing},Check_fresh_song+1};
+										{true,false} ->
+											{{Id_song_playing,Startime_playing,Length_song_playing,finished},Check_fresh_song};
+										{false,_} ->
+											{{Id_song_playing,Startime_playing,Length_song_playing,Status},Check_fresh_song}
+												
 									end
 								end,
-							Accum_State),
-						%%create two states one for the current song being processed and one for finished songs which have been processed
-						%%this is so you can insert the old songs into the database when a new song is identified as being played
-						%%{lists:flatten(Accum_State,Process_tracks),New_timestamp};
-						{Process_tracks,New_timestamp,Ids_songs};
-					({Fprint_song,Id_song_ets,Artist_name_ets},{[],New_timestamp,Ids_songs})->
-						{[{Id_song_ets,New_timestamp,0} | []],New_timestamp,Ids_songs}
+							0,Accum_State),
+						case Check_fresh_song_status > 0 of 
+							true ->
+								{Process_tracks,New_timestamp};
+							false ->
+								io:format("~nfresh track identified is ~p",[Artist_name_ets]),
+								New_process_tracks = [{Id_song_ets,New_timestamp,0,fresh} | Process_tracks ],
+								{New_process_tracks,New_timestamp}
+						end
 				end,
-			{State_data,Timestamp_data,[]},Ets_results),
+			{State_data,Timestamp_data},Ets_results),
 			Process_accum_end
 	end.
