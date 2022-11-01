@@ -2,7 +2,8 @@
 
 -export([]).
 
--export([start/0,start_multiple/1,start/1, stop/1, init/1,decode_batch/0,create_fingerprints/0,load_fingerprints_ets/0]).
+-export([start/0,get_state/0,start_multiple/1,start/1, stop/0, init/1,decode_batch/0,create_fingerprints/0,
+         load_fingerprints_ets/0,get_duration_audio_wav/1,get_audio_parts_wav/1]).
 
 
 %% @doc 
@@ -18,6 +19,43 @@
 
 
 %% @doc
+
+
+
+
+%% @doc for testing for running multiple instances of a command 
+%%Command = "/usr/bin/fpcalc -ts -chunk 1  -length 2222 -overlap -json http://172.23.0.2:8005",
+%%["/usr/bin/fpcalc -ts -chunk 2 -overlap -json http://cassini.shoutca.st:8922/;?type=http&nocache=115",
+%%"/usr/bin/fpcalc -ts -chunk 2 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra"
+%%%%Command = "/usr/bin/fpcalc -ts -chunk 1 -length 2222 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra",
+%%] Command = "ffmpeg -re -i kiz.wav -c copy -listen 1 -f wav http://172.23.0.2:8005"
+-spec start_multiple(list())->list().
+start_multiple(Radio_stations)->
+	List_pids = lists:map(fun(Radiostat) -> start(Radiostat) end,lists:seq(1,length(Radio_stations))).
+
+
+%% @doc for starting the port command
+-spec start()->error_no_prog_specified | pid().
+start() ->
+    error_no_prog_specified.
+
+
+start(ExtPrg) ->
+    spawn(?MODULE, init, [ExtPrg]).
+
+
+%% @doc for stopping the port program
+-spec stop()-> stop.
+stop() ->
+    ?MODULE ! stop.
+
+
+
+-spec get_state()-> {ok,list()}.
+get_state() ->
+	Response = {get_state_data,self()} ! ?MODULE,
+	{ok,Response}.
+
 
 -spec decode_batch()-> list().
 decode_batch()->
@@ -50,9 +88,10 @@ create_fingerprints()->
 	lists:map(
 		fun(File_name)-> 
 			Path_convert_track = lists:concat([Track_converted_folder,"/",File_name]),
-			Command_Exec = ["/usr/bin/fpcalc","-chunk","1","-json","-overlap",Path_convert_track],
+            Duration_track = proplists:get_value(total_seconds,get_duration_audio_wav(Path_convert_track)),
+			Command_Exec = ["/usr/bin/fpcalc","-chunk","1","-json","-overlap","-length",erlang:integer_to_list(Duration_track),Path_convert_track],
 			Fingerprint_name = erlang:binary_to_list(uuid:uuid_to_string(uuid:get_v4(), binary_standard)),
-			Proplist_binary = [{name_file,File_name},{id_file,Fingerprint_name}],
+			Proplist_binary = [{name_file,File_name},{id_file,Fingerprint_name},{duration,Duration_track}],
 			io:format("~ncommand to be executed is ~p",[Command_Exec]),
 			case exec:run(Command_Exec, [sync,stdout]) of 
 				{ok,[{stdout,List_fingerprint}]} ->
@@ -102,31 +141,7 @@ load_fingerprints_ets()->
 
 	
 
-%% @doc for testing for running multiple instances of a command 
-%%Command = "/usr/bin/fpcalc -ts -length 3600 -chunk 1 -overlap -json http://172.23.0.2:8005",
-%%["/usr/bin/fpcalc -ts -chunk 2 -overlap -json http://cassini.shoutca.st:8922/;?type=http&nocache=115",
-%%"/usr/bin/fpcalc -ts -chunk 2 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra"
-%%%%Command = "/usr/bin/fpcalc -ts -chunk 1 -overlap -json http://yfm1079accra.atunwadigital.streamguys1.com/yfm1079accra",
-%%]
--spec start_multiple(list())->list().
-start_multiple(Radio_stations)->
-	List_pids = lists:map(fun(Radiostat) -> start(Radiostat) end,lists:seq(1,length(Radio_stations))).
 
-
-%% @doc for starting the port command
--spec start()->error_no_prog_specified | pid().
-start() ->
-    error_no_prog_specified.
-
-
-start(ExtPrg) ->
-    spawn(?MODULE, init, [ExtPrg]).
-
-
-%% @doc for stopping the port program
--spec stop(pid())-> stop.
-stop(Pid) ->
-    Pid ! stop.
 
 
 %%for initilizing the port for runnig commands
@@ -152,7 +167,10 @@ loop(Pid,Ospid,ExtPrg,State_data) ->
 			exit(processexited);
 		{stdout,Ospid,Fingerprint_data_station} ->
 			Process_data = process_data(State_data,Fingerprint_data_station),
-			loop(Pid,Ospid,ExtPrg,Process_data)
+			loop(Pid,Ospid,ExtPrg,Process_data);
+		{get_state_data,Pid} ->
+			Pid ! State_data,
+			loop(Pid,Ospid,ExtPrg,State_data)
     end.
 
 
@@ -166,13 +184,12 @@ process_data(State_data,Data_station)->
 	Json_data = jsx:decode(unicode:characters_to_binary(Data_station)),
 	Timestamp_data = proplists:get_value(<<"timestamp">>,Json_data),
 	Fingerprint_index = proplists:get_value(<<"fingerprint">>,Json_data),
-	io:format("~nstate data is ~p",[State_data]),
+	io:format("~nstate data is ~p,~nresultdata is ~p",[State_data,Fingerprint_index]),
 	%%io:format("~nstate data is ~p~n json data is ~p ~p",[State_data,Timestamp_data,Fingerprint_index]),
 	case ets:lookup(fingerprints,Fingerprint_index) of 
 		[]->
 			State_data;
 		Ets_results ->
-			%%io:format("~n result data is ~p",[Ets_results]),
 			{Process_accum_end,_} = 
 			lists:foldl(
 				fun({Fprint_song,Id_song_ets,Artist_name_ets},{Accum_State,New_timestamp})->
@@ -180,7 +197,8 @@ process_data(State_data,Data_station)->
 							lists:mapfoldl(
 								fun(Single_song_state_data = {Id_song_playing,Startime_playing,Length_song_playing,Status},Check_fresh_song)->
 									%%io:format("~n new timestamp ~p~n and  old timestamp ~p",[New_timestamp,Startime_playing]),
-									case  {Id_song_ets =:= Id_song_playing,(New_timestamp - (Startime_playing+Length_song_playing)) =< 2} of 
+									Difference_last_play = New_timestamp - (Startime_playing+Length_song_playing),
+									case  {Id_song_ets =:= Id_song_playing,Difference_last_play =< 2} of 
 										{true,true} ->
 											New_length_playing = New_timestamp - Startime_playing,
 											{{Id_song_playing,Startime_playing,New_length_playing,processing},Check_fresh_song+1};
@@ -204,3 +222,26 @@ process_data(State_data,Data_station)->
 			{State_data,Timestamp_data},Ets_results),
 			Process_accum_end
 	end.
+
+
+get_duration_audio_wav(File_path)->
+	{ok, Audio_binary} = file:read_file(File_path),
+	<<_:4/binary,ChunkSize:32/integer-little,_:4/binary,_:4/binary,_:32/integer-little,_:16/integer-little,
+	  _:16/integer-little,_:32/integer-little,ByteRate:32/integer-little,_/binary>> = Audio_binary,
+	TotalSeconds = floor(ChunkSize/ByteRate),
+	Minutes = floor(TotalSeconds/60),
+	Seconds = TotalSeconds rem 60,
+	[{minutes,Minutes},{seconds,Seconds},{total_seconds,TotalSeconds}].
+
+
+get_audio_parts_wav(File_path)->
+	{ok, Audio_binary} = file:read_file(File_path),
+	<<Chunk_id:4/binary,ChunkSize:32/integer-little,Format:4/binary,Subchunkid:4/binary,Subcsize:32/integer-little,Audio_format:16/integer-little,
+	  Number_channels:16/integer-little,SamplesPerSecond:32/integer-little,ByteRate:32/integer-little,BlockAlign:16/integer-little,BitsPerSample:16/integer-little,
+	  SubChunkTwo_id:4/binary,ChunkTwoSize:32/integer-little,PcmData:ChunkTwoSize/binary
+	  ,_/binary>> = Audio_binary,
+	[{chunk_id,Chunk_id},{chunk_size,ChunkSize},{format,Format},{subchunkid,Subchunkid},{subchunksize,Subcsize},{audio_format,Audio_format},
+	 {number_channels,Number_channels},{samplespersecond,SamplesPerSecond},{byterate,ByteRate},{blockalign,BlockAlign},{bitspersample,BitsPerSample},
+	 {subchunktwoid,SubChunkTwo_id},{chunktwosize,ChunkTwoSize},{pcm_data,PcmData}
+	].
+
