@@ -89,9 +89,15 @@ create_fingerprints()->
 		fun(File_name)-> 
 			Path_convert_track = lists:concat([Track_converted_folder,"/",File_name]),
             Duration_track = proplists:get_value(total_seconds,get_duration_audio_wav(Path_convert_track)),
-			Command_Exec = ["/usr/bin/fpcalc","-chunk","1","-json","-overlap","-length",erlang:integer_to_list(Duration_track),Path_convert_track],
+            Sample_rate = proplists:get_value(samplespersecond,get_audio_parts_wav(Path_convert_track)),
+            Channels = proplists:get_value(number_channels,get_audio_parts_wav(Path_convert_track)),
+			Command_Exec = ["/usr/bin/fpcalc","-format","wav","-chunk","1","-json","-overlap",
+			"-channels",erlang:integer_to_list(Channels),
+			"-length",erlang:integer_to_list(Duration_track),
+			"-rate",erlang:integer_to_list(Sample_rate),
+			Path_convert_track],
 			Fingerprint_name = erlang:binary_to_list(uuid:uuid_to_string(uuid:get_v4(), binary_standard)),
-			Proplist_binary = [{name_file,File_name},{id_file,Fingerprint_name},{duration,Duration_track}],
+			Proplist_binary = [{name_file,File_name},{id_file,Fingerprint_name},{duration,Duration_track},{sample_rate,Sample_rate},{channels,Channels}],
 			io:format("~ncommand to be executed is ~p",[Command_Exec]),
 			case exec:run(Command_Exec, [sync,stdout]) of 
 				{ok,[{stdout,List_fingerprint}]} ->
@@ -117,7 +123,7 @@ load_fingerprints_ets()->
 	%%io:format("~njson data is ~p",[Directlist]),
 	lists:map(
 		fun(File_name)->
-			%%io:format("~nfile name is  ~p",[File_name]),
+			io:format("~nfile name is  ~p",[File_name]),
 			{ok,[Data]} = file:consult(lists:concat([Fingerprint_folder,"/",File_name])),
 			Id_track =  proplists:get_value(id_file,Data),
 			Name_file = proplists:get_value(name_file,Data),
@@ -136,12 +142,6 @@ load_fingerprints_ets()->
 		end,
 	Directlist),
 	ok.
-
-
-
-	
-
-
 
 
 %%for initilizing the port for runnig commands
@@ -184,44 +184,75 @@ process_data(State_data,Data_station)->
 	Json_data = jsx:decode(unicode:characters_to_binary(Data_station)),
 	Timestamp_data = proplists:get_value(<<"timestamp">>,Json_data),
 	Fingerprint_index = proplists:get_value(<<"fingerprint">>,Json_data),
-	io:format("~nstate data is ~p,~nresultdata is ~p",[State_data,Fingerprint_index]),
+	io:format("~nstate data is ~p, ~nresultdata is ~p",[State_data,Fingerprint_index]),
 	%%io:format("~nstate data is ~p~n json data is ~p ~p",[State_data,Timestamp_data,Fingerprint_index]),
 	case ets:lookup(fingerprints,Fingerprint_index) of 
 		[]->
-			State_data;
+			
+			{Process_pause_state,New_timestamp} = process_pause_stream(State_data,Timestamp_data),
+			Process_pause_state;
 		Ets_results ->
-			{Process_accum_end,_} = 
-			lists:foldl(
-				fun({Fprint_song,Id_song_ets,Artist_name_ets},{Accum_State,New_timestamp})->
-						{Process_tracks,Check_fresh_song_status} =
-							lists:mapfoldl(
-								fun(Single_song_state_data = {Id_song_playing,Startime_playing,Length_song_playing,Status},Check_fresh_song)->
-									%%io:format("~n new timestamp ~p~n and  old timestamp ~p",[New_timestamp,Startime_playing]),
-									Difference_last_play = New_timestamp - (Startime_playing+Length_song_playing),
-									case  {Id_song_ets =:= Id_song_playing,Difference_last_play =< 2} of 
-										{true,true} ->
-											New_length_playing = New_timestamp - Startime_playing,
-											{{Id_song_playing,Startime_playing,New_length_playing,processing},Check_fresh_song+1};
-										{true,false} ->
-											{{Id_song_playing,Startime_playing,Length_song_playing,finished},Check_fresh_song};
-										{false,_} ->
-											{{Id_song_playing,Startime_playing,Length_song_playing,Status},Check_fresh_song}
-												
-									end
-								end,
-							0,Accum_State),
-						case Check_fresh_song_status > 0 of 
-							true ->
-								{Process_tracks,New_timestamp};
-							false ->
-								io:format("~nfresh track identified is ~p",[Artist_name_ets]),
-								New_process_tracks = [{Id_song_ets,New_timestamp,0,fresh} | Process_tracks ],
-								{New_process_tracks,New_timestamp}
-						end
-				end,
-			{State_data,Timestamp_data},Ets_results),
+			{Process_accum_end,_} = process_continous_tracks(State_data,Timestamp_data,Ets_results),
 			Process_accum_end
 	end.
+
+
+%%this is for processing when a track has been identfied or there is no pause in the number of identified tracks
+process_continous_tracks(State_data,Timestamp_data,Ets_results)->
+    {Process_tracks,New_timestamp} = 
+	lists:foldl(
+		fun({Fprint_song,Id_song_ets,Artist_name_ets},{Accum_State,New_timestamp})->
+				{Process_tracks,Check_fresh_song_status} =
+					lists:mapfoldl(
+						fun(Single_song_state_data = {Id_song_playing,Startime_playing,Length_song_playing,Status},Check_fresh_song)->
+							%%io:format("~n new timestamp ~p~n and  old timestamp ~p",[New_timestamp,Startime_playing]),
+							Difference_last_play = New_timestamp - (Startime_playing+Length_song_playing),
+							io:format("~ndiffernce is ~p",[Difference_last_play]),
+							case  {Id_song_ets =:= Id_song_playing,Difference_last_play =< 2} of 
+								{true,true} ->
+									New_length_playing = New_timestamp - Startime_playing,
+									{{Id_song_playing,Startime_playing,New_length_playing,processing},Check_fresh_song+1};
+								{true,false} ->
+									 io:format("current song identification ends here"),
+									{{Id_song_playing,Startime_playing,Length_song_playing,finished},Check_fresh_song};
+								{false,_} ->
+									io:format("differnt song identfiied"),
+									{{Id_song_playing,Startime_playing,Length_song_playing,Status},Check_fresh_song}
+										
+							end
+						end,
+					0,Accum_State),
+				case Check_fresh_song_status > 0 of 
+					true ->
+						{Process_tracks,New_timestamp};
+					false ->
+						io:format("~nfresh track identified is ~p",[Artist_name_ets]),
+						New_process_tracks = [{Id_song_ets,New_timestamp,0,fresh} | Process_tracks ],
+						{New_process_tracks,New_timestamp}
+				end
+		end,
+	{State_data,Timestamp_data},Ets_results).
+
+
+
+%%this is for when there are paused in the stream and no track has been identified
+process_pause_stream(State_data,New_timestamp)->
+	Process_tracks =
+	lists:foldl(
+		fun(Single_song_state_data = {Id_song_playing,Startime_playing,Length_song_playing,Status},Accum)->
+			Difference_last_play = New_timestamp - (Startime_playing+Length_song_playing),
+			io:format("~ndiffernce is ~p",[Difference_last_play]),
+			case Difference_last_play =< 2 of 
+				true ->
+			[{Id_song_playing,Startime_playing,Length_song_playing,Status} | Accum];				
+				false ->
+			[{Id_song_playing,Startime_playing,Length_song_playing,finished} | Accum]
+			end
+		end,
+	[],State_data),
+	{Process_tracks,New_timestamp}.
+
+
 
 
 get_duration_audio_wav(File_path)->
@@ -240,8 +271,12 @@ get_audio_parts_wav(File_path)->
 	  Number_channels:16/integer-little,SamplesPerSecond:32/integer-little,ByteRate:32/integer-little,BlockAlign:16/integer-little,BitsPerSample:16/integer-little,
 	  SubChunkTwo_id:4/binary,ChunkTwoSize:32/integer-little,PcmData:ChunkTwoSize/binary
 	  ,_/binary>> = Audio_binary,
+	TotalSeconds = floor(ChunkSize/ByteRate),
+	Minutes = floor(TotalSeconds/60),
+	Seconds = TotalSeconds rem 60,
 	[{chunk_id,Chunk_id},{chunk_size,ChunkSize},{format,Format},{subchunkid,Subchunkid},{subchunksize,Subcsize},{audio_format,Audio_format},
 	 {number_channels,Number_channels},{samplespersecond,SamplesPerSecond},{byterate,ByteRate},{blockalign,BlockAlign},{bitspersample,BitsPerSample},
-	 {subchunktwoid,SubChunkTwo_id},{chunktwosize,ChunkTwoSize},{pcm_data,PcmData}
+	 {subchunktwoid,SubChunkTwo_id},{chunktwosize,ChunkTwoSize},{pcm_data,PcmData},
+	 {minutes,Minutes},{seconds,Seconds},{total_seconds,TotalSeconds}
 	].
 
