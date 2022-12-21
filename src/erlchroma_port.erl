@@ -53,7 +53,7 @@ stop() ->
 
 -spec get_state()-> {ok,list()}.
 get_state() ->
-	Response = {get_state_data,self()} ! ?MODULE,
+	Response = ?MODULE ! {get_state_data,self()} ,
 	{ok,Response}.
 
 
@@ -189,7 +189,7 @@ process_data(State_data,Data_station)->
 	case ets:lookup(fingerprints,Fingerprint_index) of 
 		[]->
 			
-			{Process_pause_state,New_timestamp} = process_pause_stream(State_data,Timestamp_data),
+			{Process_pause_state,_} = process_pause_stream(State_data,Timestamp_data),
 			Process_pause_state;
 		Ets_results ->
 			{Process_accum_end,_} = process_continous_tracks(State_data,Timestamp_data,Ets_results),
@@ -213,7 +213,10 @@ process_continous_tracks(State_data,Timestamp_data,Ets_results)->
 									New_length_playing = New_timestamp - Startime_playing,
 									{{Id_song_playing,Startime_playing,New_length_playing,processing},Check_fresh_song+1};
 								{true,false} ->
-									 io:format("current song identification ends here"),
+									 io:format("current song identification ends here.repetition of song may have started or something else"),
+									{{Id_song_playing,Startime_playing,Length_song_playing,finished},Check_fresh_song};
+								{false,true} ->
+									 io:format("current song identification ends here."),
 									{{Id_song_playing,Startime_playing,Length_song_playing,finished},Check_fresh_song};
 								{false,_} ->
 									io:format("differnt song identfiied"),
@@ -253,8 +256,6 @@ process_pause_stream(State_data,New_timestamp)->
 	{Process_tracks,New_timestamp}.
 
 
-
-
 get_duration_audio_wav(File_path)->
 	{ok, Audio_binary} = file:read_file(File_path),
 	<<_:4/binary,ChunkSize:32/integer-little,_:4/binary,_:4/binary,_:32/integer-little,_:16/integer-little,
@@ -279,4 +280,3 @@ get_audio_parts_wav(File_path)->
 	 {subchunktwoid,SubChunkTwo_id},{chunktwosize,ChunkTwoSize},{pcm_data,PcmData},
 	 {minutes,Minutes},{seconds,Seconds},{total_seconds,TotalSeconds}
 	].
-
